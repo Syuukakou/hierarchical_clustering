@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 import re
 sys.path.append("/home/syuu/Project/nict_clustering")
+# from Src.functions import plot_pairwise_intersection_based_matrix
+from Clustering_Plot_methods.functions import plot_pairwise_intersection_based_matrix, i_min_ab_a
 
 
 def calculate_distance(csr_matrix, v0, v1, alpha, beta):
@@ -51,6 +53,41 @@ def calculate_distance(csr_matrix, v0, v1, alpha, beta):
 
     return 1 - i_factor * c_factor
 
+
+def pdist_mat(csr_matrix, c, logistic_alpha, s_shaped_alpha, beta):
+    """_summary_
+
+    Args:
+        csr_matrix (_type_): _description_
+        c (_type_): _description_
+    """
+    mat_list = [sps.csr_matrix(csr_matrix[i, :].sum(axis=0)) for i in c]
+    # print(mat_list[0])
+    mat = sps.vstack(mat_list)
+    intersection, logisti_similarity = i_min_ab_a(
+        csr_matrix=mat,
+        logistic_alpha=logistic_alpha,
+        s_shaped_alpha=s_shaped_alpha,
+        beta=beta,
+        s_shaped_func=False
+    )
+    logistic_dist = 1 - logisti_similarity
+    # s_shaped_dist = 1 - s_shaped_similarity
+
+    logistic_dist[np.tril_indices(logistic_dist.shape[0], -1)] = np.inf
+    np.fill_diagonal(logistic_dist, np.inf)
+
+    # s_shaped_dist[np.tril_indices(s_shaped_dist.shape[0], -1)] = np.inf
+    # np.fill_diagonal(s_shaped_dist, 0)
+
+    logistic_min_ij = np.unravel_index(logistic_dist.argmin(), logistic_dist.shape)
+    # s_shaped_min_ij = np.unravel_index(s_shaped_dist.argmin(), logistic_dist.shape)
+    # , (c[s_shaped_min_ij[0]], c[s_shaped_min_ij[1]], s_shaped_dist.argmin())
+
+    return (c[logistic_min_ij[0]], c[logistic_min_ij[1]], logistic_dist.argmin())
+
+
+
 def find_min_dist(csr_matrix, c):
     """_summary_
 
@@ -90,67 +127,102 @@ def test_clustering():
     npz_filepath="latest_analysis_date/clustering/gafgyt_coinminer_sabsik_hajime_tsunami/input_data/avcalss_based_formatted_label_gafgyt_coinminer_sabsik_hajime_tsunami_CSR.npz"
     csr_matrix = sps.load_npz(npz_filepath)
    
-    c = []
+    # c = []
     c = list(range(csr_matrix.shape[0]))
 
-    I = len(c) + 1
+    I = len(c)
 
     linkage_matrix = np.zeros((len(c)-1, 4))
     mat_index = 0
     cluster_dict = {}
+    logistic_alpha, s_shaped_alpha, beta = 12, 5, 3
 
     while len(c) > 1:
+        circle_start = datetime.now()
         print(f"Clusters: {len(c)}")
         print("Finding min pdist...")
         min_i, min_j, min_dist = find_min_dist(csr_matrix, c)
+
+        # logistic_min_dist = pdist_mat(
+        #     csr_matrix=csr_matrix,
+        #     c=c,
+        #     logistic_alpha=logistic_alpha,
+        #     s_shaped_alpha=s_shaped_alpha,
+        #     beta = beta
+        # )
+        # min_i, min_j, min_dist = logistic_min_dist[0], logistic_min_dist[1], logistic_min_dist[2]
         print(f"min_i: {min_i}, min_j: {min_j}, dist: {min_dist}")
         # print(f"{labels[min_i]}, {labels[min_j]}, {min_dist}")
 
         if not isinstance(min_i, list) and not isinstance(min_j, list):
+            # i_index = c.index(min_i)
+            # j_index = c.index(min_j)
+            # remove min_i and min_j from c
+            print(f"Remove {min_i}, {min_j}, {min_dist}, {I}")
+            c.remove(min_i)
+            c.remove(min_j)
+            # add [min_i, min_j] to c
             c.append([min_i, min_j])
-            linkage_matrix[mat_index, :] = [c.index(min_i), c.index(min_j), min_dist, 2]
+
+            linkage_matrix[mat_index, :] = [min_i, min_j, min_dist, 2]
             cluster_dict[str([min_i, min_j])] = I
         
-        if isinstance(min_i, list) and not isinstance(min_j, list):
+        elif isinstance(min_i, list) and not isinstance(min_j, list):
             i = str(min_i)
+            # j_index = c.index(min_j)
+            print(f"Remove {min_i}, {min_j}, {min_dist}, {I}")
+            c.remove(min_j)
+            c.remove(min_i)
+
             min_i.append(min_j)
             c.append(min_i)
-            linkage_matrix[mat_index, :] = [c.index(min_j), cluster_dict[i], min_dist, len(min_i)]
+            linkage_matrix[mat_index, :] = [min_j, cluster_dict[i], min_dist, len(min_i)]
             cluster_dict[str(min_i)] = I
 
-        if not isinstance(min_i, list) and isinstance(min_j, list):
+        elif not isinstance(min_i, list) and isinstance(min_j, list):
             j = str(min_j)
+            # i_index = c.index(min_i)
+            print(f"Remove {min_i}, {min_j}, {min_dist}, {I}")
+            c.remove(min_i)
+            c.remove(min_j)
+
             min_j.append(min_i)
             c.append(min_j)
-            linkage_matrix[mat_index, :] = [c.index(min_i), cluster_dict[j], min_dist, len(min_j)]
+            linkage_matrix[mat_index, :] = [min_i, cluster_dict[j], min_dist, len(min_j)]
             cluster_dict[str(min_j)] = I
 
-        if isinstance(min_i, list) and isinstance(min_j, list):
+        elif isinstance(min_i, list) and isinstance(min_j, list):
             i = str(min_i)
             j = str(min_j)
+            print(f"Remove {min_i}, {min_j}, {min_dist}, {I}")
+            c.remove(min_i)
+            c.remove(min_j)
+
             min_i.extend(min_j)
             c.append(min_i)
             linkage_matrix[mat_index, :] = [cluster_dict[i], cluster_dict[j], min_dist, len(min_i)]
             cluster_dict[str(min_i)] = I
         
-        print(f"Remove {min_i}, {min_j}, {min_dist}, {I}")
         print(linkage_matrix[mat_index, :])
-        c.remove(min_i)
-        c.remove(min_j)
+        # c.remove(min_i)
+        # c.remove(min_j)
         print([i for i in c if isinstance(i, list)])
 
         mat_index += 1
         I += 1
+        print(f"Clusters: {len(c)}")
+        print(f"Time consuming: {datetime.now() - circle_start}")
         print("---------------------------------------------------------")
     
     print(linkage_matrix)
-    np.save("hcluster/linkage_matrix.npy", linkage_matrix)
+    np.save("hcluster/files/linkage_matrix_matrx_calculated.npy", linkage_matrix)
+
 
 def plot_dendrogram():
     """
     func
     """
-    label_file_path=r"Files\input_data\avcalss_based_formatted_label_gafgyt_coinminer_sabsik_hajime_tsunami_labels.txt"
+    label_file_path="latest_analysis_date/clustering/gafgyt_coinminer_sabsik_hajime_tsunami/input_data/avcalss_based_formatted_label_gafgyt_coinminer_sabsik_hajime_tsunami_labels.txt"
     labels = []
     with open(label_file_path, "r", encoding='utf-8') as f:
         for line in f:
@@ -163,12 +235,13 @@ def plot_dendrogram():
         label_with_index.append(
             splitted[0] + "_" + str(l_index) + "_" + splitted[-1].strip("'")
         )
-    linkage_matrix = np.load(r"Files\input_data\linkage_matrix.npy")
+    linkage_matrix = np.load("hcluster/files/linkage_matrix_matrx_calculated.npy")
 
     fig, ax = plt.subplots(figsize=(80, 60))
     r = dendrogram(
         linkage_matrix,
         labels=label_with_index,
+        distance_sort=False,
         leaf_font_size=5, ax=ax,
         leaf_rotation=90,
         show_leaf_counts=False)
@@ -210,11 +283,43 @@ def plot_dendrogram():
     plt.title("No Truncate_mode", fontsize=50)
     ax.tick_params(axis="y", labelsize=20)
 
-    plt.savefig("hcluster/test4.pdf", format='pdf', bbox_inches='tight')
+    plt.savefig("hcluster/files/matrx_calculated.pdf", format='pdf', bbox_inches='tight')
 
+    npz_filepath="latest_analysis_date/clustering/gafgyt_coinminer_sabsik_hajime_tsunami/input_data/avcalss_based_formatted_label_gafgyt_coinminer_sabsik_hajime_tsunami_CSR.npz"
+    csr_matrix = sps.load_npz(npz_filepath)
+    intersection = csr_matrix.dot(csr_matrix.T)
+    xtick_labels = [i.get_text() for i in xtick_labels_text]
+
+    plot_pairwise_intersection_based_matrix(
+        csr_matrix=csr_matrix,
+        intersection_csr_matrix=intersection,
+        labels=label_with_index,
+        xtick_labels=xtick_labels,
+        colormap=colormap,
+        save_path = "hcluster/files",
+        keywords_str="all",
+        alpha=12,
+        method="Set_Dist_matrx_calculated"
+    )
+
+    """
+    s0: 69
+    trendmicro-housecall_88_sabsik: 68
+    trendmicro_181_sabsik: 69
+    ----------------------------------
+    s1: 33944
+    trendmicro_19_sabsik: 43
+    trendmicro-housecall_177_sabsik: 39
+    sangfor_31_sabsik: 243
+    ikarus_256_coinminer: 8
+    microsoft_265_sabsik: 33893
+    ---------------------------------
+
+    s0: 69, s1: 33944, intersection: 3, c01: 66, c10: 33941
+    """
 
 if __name__ == "__main__":
     start = datetime.now()
-    # test_clustering()
+    test_clustering()
     plot_dendrogram()
     print(f"END: {datetime.now() - start}")

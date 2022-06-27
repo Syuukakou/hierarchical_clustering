@@ -665,6 +665,7 @@ def plot_pairwise_intersection_based_matrix(
     pairwise_size_df = pd.DataFrame(np.random.randint(0, 100, size=(len(labels), len(labels))), columns=xtick_labels, index=xtick_labels)
     
     for pair in combinations(labels, 2):
+        # print(pair)
         row_0 = csr_matrix[labels.index(pair[0]), :].A.astype(bool)
         row_1 = csr_matrix[labels.index(pair[1]), :].A.astype(bool)
         count_0 = row_0.sum()
@@ -673,6 +674,7 @@ def plot_pairwise_intersection_based_matrix(
         union = (row_0 | row_1).sum()
         relative_complement_01 = (row_0 > row_1).sum()
         relative_complement_10 = (row_1 > row_0).sum()
+        # print(f"{pair[0]} {pair[1]}: {count_0} {count_1} {union} {relative_complement_01} {relative_complement_10}")
 
         # print(pair, count_0, count_1, intersection_df.loc[pair[0], pair[1]], )
         intersection_vec = row_0 & row_1
@@ -680,6 +682,8 @@ def plot_pairwise_intersection_based_matrix(
             containing_relationship = "O"
         else:
             containing_relationship = "X"
+        # print(str(count_0) + "," + str(count_1) + "," + str(intersection_df.loc[pair[0], pair[1]]) + "," + containing_relationship \
+        #     + "\n" + str(relative_complement_01) + "," + str(relative_complement_10) + "," + str(union))
         
         pairwise_size_df.at[pair[0], pair[1]] = str(count_0) + "," + str(count_1) + "," + str(intersection_df.loc[pair[0], pair[1]]) + "," + containing_relationship \
             + "\n" + str(relative_complement_01) + "," + str(relative_complement_10) + "," + str(union)
