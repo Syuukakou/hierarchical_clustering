@@ -127,3 +127,4 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+Files/input_data/20220620/input_data/20220620_CSR.npz

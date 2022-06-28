@@ -10,68 +10,9 @@ import re
 import json
 sys.path.append("/home/syuu/Project/nict_clustering")
 # from Src.functions import plot_pairwise_intersection_based_matrix
-from numba import njit
-import numba
 from Clustering_Plot_methods.functions import plot_pairwise_intersection_based_matrix, i_min_ab_a, one_hot_encoding
 
-
-@njit(fastmath=True)
-def calculate_i_min_b(i_min_b, alpha):
-
-    if i_min_b == 1:
-        i_factor = 1
-    elif i_min_b == 0:
-        i_factor = 0
-    else:
-        # s_shaped
-        # i_factor = 1 - 1 / (1 + np.power(i_min_b / (1 - i_min_b), alpha))
-        # logistic
-        i_factor = 1 / (1 + np.exp(-alpha * (i_min_b - 0.5)))
-    return i_factor
-
-@njit(fastmath=True)
-def cal_intersection(cluster0, cluster1):
-    count = 0
-    for i, j in zip(cluster0, cluster1):
-        if i & j == 1:
-            count += 1
-    return count
-
-@njit(fastmath=True)
-def cal_ab(cluster0, cluster1):
-    count = 0
-    for i, j in zip(cluster0, cluster1):
-        if i & ~j == 1:
-            count += 1
-    return count
-
-@njit(fastmath=True)
-def cal_ba(cluster0, cluster1):
-    count = 0
-    for i, j in zip(cluster0, cluster1):
-        if ~i & j == 1:
-            count += 1
-    return count
-
-@njit(fastmath=True)
-def count_one_bytearray(byte_array):
-    count = 0
-    for i in byte_array:
-        if i == 1:
-            count += 1
-    return count
-
-@njit(fastmath=True)
-def final_calculate(ab, ba, cluster0_sum, cluster1_sum, beta, i_factor):
-    c = (ab / cluster0_sum + ba / cluster1_sum) / 2
-    c_factor = 1 - np.power(c, beta)
-    set_distance = 1 - i_factor * c_factor
-
-    return set_distance
-
-
-@njit
-def calculate_distance(cluster0, cluster1, alpha, beta):
+def calculate_distance(csr_matrix, v0, v1, alpha, beta):
     """
     Assume two sets `A, B`, and `|B| <= |A|`
     `x = |I| / |B|`
@@ -88,25 +29,73 @@ def calculate_distance(cluster0, cluster1, alpha, beta):
         v0 (_type_): _description_
         v1 (_type_): _description_
     """
-    cluster0_sum = count_one_bytearray(cluster0)
-    cluster1_sum = count_one_bytearray(cluster1)
+    start_time = datetime.now()
+    # print(f"v0: {v0}, v1: {v1}")
+    cluster0 = csr_matrix[v0, :].sum(axis=0).astype(bool)
+    cluster1 = csr_matrix[v1, :].sum(axis=0).astype(bool)
+    
+    cluster0_sum = cluster0.sum()
+    cluster1_sum = cluster1.sum()
 
     min_b = min(cluster0_sum, cluster1_sum)
-    intersection = cal_intersection(cluster0, cluster1)
+    # intersection = (cluster0 & cluster1).sum()
+    intersection = np.multiply(cluster0, cluster1).sum()
     i_min_b = intersection / min_b
-
-    i_factor = calculate_i_min_b(i_min_b, alpha)
+    if i_min_b == 1:
+        i_factor = 1
+    elif i_min_b == 0:
+        i_factor = 0
+    else:
+        # s_shaped
+        # i_factor = 1 - 1 / (1 + np.power(i_min_b / (1 - i_min_b), alpha))
+        # logistic
+        i_factor = 1 / (1 + np.exp(-alpha * (i_min_b - 0.5)))
     
-    ab = cal_ab(cluster0, cluster1)
+    # ab = np.greater(cluster0 > cluster1).sum()
+    # ab = (cluster0 > cluster1).sum()
+    # ba = np.less(cluster0 < cluster1).sum()
+    # ba = (cluster0 < cluster1).sum()
+    c = (np.greater(cluster0, cluster1).sum() / cluster0_sum + np.less(cluster0, cluster1).sum() / cluster1_sum) / 2
+    # c = (ab / cluster0_sum + ba / cluster1_sum) / 2
+    c_factor = 1 - np.power(c, beta)
+    print(f"Calculation time: {datetime.now() - start_time}")
 
-    ba = cal_ba(cluster0, cluster1)
+    return 1 - i_factor * c_factor
 
-    set_distance = final_calculate(ab, ba, cluster0_sum, cluster1_sum, beta, i_factor)
+def pdist_mat(csr_matrix, c, logistic_alpha, s_shaped_alpha, beta):
+    """_summary_
 
-    return set_distance
+    Args:
+        csr_matrix (_type_): _description_
+        c (_type_): _description_
+    """
+    mat_list = [sps.csr_matrix(csr_matrix[i, :].sum(axis=0)) for i in c]
+    # print(mat_list[0])
+    mat = sps.vstack(mat_list)
+    intersection, logisti_similarity = i_min_ab_a(
+        csr_matrix=mat,
+        logistic_alpha=logistic_alpha,
+        s_shaped_alpha=s_shaped_alpha,
+        beta=beta,
+        s_shaped_func=False
+    )
+    logistic_dist = 1 - logisti_similarity
+    # s_shaped_dist = 1 - s_shaped_similarity
+
+    logistic_dist[np.tril_indices(logistic_dist.shape[0], -1)] = np.inf
+    np.fill_diagonal(logistic_dist, np.inf)
+
+    # s_shaped_dist[np.tril_indices(s_shaped_dist.shape[0], -1)] = np.inf
+    # np.fill_diagonal(s_shaped_dist, 0)
+
+    logistic_min_ij = np.unravel_index(logistic_dist.argmin(), logistic_dist.shape)
+    # s_shaped_min_ij = np.unravel_index(s_shaped_dist.argmin(), logistic_dist.shape)
+    # , (c[s_shaped_min_ij[0]], c[s_shaped_min_ij[1]], s_shaped_dist.argmin())
+
+    return (c[logistic_min_ij[0]], c[logistic_min_ij[1]], logistic_dist.argmin())
 
 
-def find_min_dist(cluster_dict, c, logistic_alpha=12, s_shaped_alpha=5):
+def find_min_dist(csr_matrix, c, logistic_alpha=12, s_shaped_alpha=5):
     """_summary_
 
     Args:
@@ -118,50 +107,23 @@ def find_min_dist(cluster_dict, c, logistic_alpha=12, s_shaped_alpha=5):
     for pair in combinations(c, 2):
         v0 = pair[0]
         v1 = pair[1]
-        start_calculate = datetime.now()
         pdist = calculate_distance(
-            cluster0=cluster_dict[str(v0)][1],
-            cluster1=cluster_dict[str(v1)][1],
+            csr_matrix=csr_matrix,
+            v0=v0,
+            v1=v1,
             # logistic: 12, s_shaped: 5
             alpha=logistic_alpha,
             beta=3
         )
-        print(f"Calculation time: {datetime.now() - start_calculate}")
         if pdist < min_dist:
             min_dist = pdist
             min_i = v0
             min_j = v1
     return min_i, min_j, min_dist
 
-@njit
-def cal_or_operation(cluster0, cluster1):
-    result = []
-    for i, j in zip(cluster0, cluster1):
-        result.append(i | j)
-    return result
-
-def bytearray_union(clusters_dict: dict, key_0: str, key_1: str):
-    return bytearray(cal_or_operation(clusters_dict[key_0][1], clusters_dict[key_1][1]))
-    # return bytearray([i | j for (i, j) in zip(clusters_dict[key_0][1], clusters_dict[key_1][1])])
-
-@njit
-def remove_list_element(c, e0, e1):
-    """
-    remove element by index from list
-    """
-    c.remove(e0)
-    c.remove(e1)
-    return c
-
-@njit
-def append_element(c, element):
-    c.append(element)
-    return c
-
 def set_dist_clustering(npz_filepath: str,
                         label_file_path: str,
-                        linkage_matrix_save_path: str,
-                        save_name: str):
+                        linkage_matrix_save_path: str):
     """
     Reference from
     https://www.saedsayad.com/clustering_hierarchical.htm
@@ -174,31 +136,31 @@ def set_dist_clustering(npz_filepath: str,
 
     # npz_filepath="/home/syuu/Project/nict_clustering/latest_analysis_date/clustering/gafgyt_coinminer_sabsik_hajime_tsunami/input_data/avcalss_based_formatted_label_gafgyt_coinminer_sabsik_hajime_tsunami_CSR.npz"
     csr_matrix = sps.load_npz(npz_filepath)
-
-    print(f"{datetime.now()}: Convert Sparse matrix to dense...")
-    mat_dense = csr_matrix.astype(np.int8).A
-    print(f"{datetime.now()}: Convert dense matrix to bytearray")
-    bytearray_list = [bytearray(i) for i in mat_dense]
    
     # c = []
-    # c = numba.typed.List(list(range(csr_matrix.shape[0])))
-    print(f"{datetime.now()}: Clustering")
     c = list(range(csr_matrix.shape[0]))
 
     I = len(c)
 
     linkage_matrix = np.zeros((len(c)-1, 4))
     mat_index = 0
-    cluster_dict = {str(i): (i, j) for (i, j) in zip(c, bytearray_list)}
-    print("---------------------------------------------------------")
+    cluster_dict = {}
     # logistic_alpha, s_shaped_alpha, beta = 12, 5, 3
 
     while len(c) > 1:
         circle_start = datetime.now()
         print(f"Clusters: {len(c)}")
         print("Finding min pdist...")
-        min_i, min_j, min_dist = find_min_dist(cluster_dict, c)
+        min_i, min_j, min_dist = find_min_dist(csr_matrix, c)
 
+        # logistic_min_dist = pdist_mat(
+        #     csr_matrix=csr_matrix,
+        #     c=c,
+        #     logistic_alpha=logistic_alpha,
+        #     s_shaped_alpha=s_shaped_alpha,
+        #     beta = beta
+        # )
+        # min_i, min_j, min_dist = logistic_min_dist[0], logistic_min_dist[1], logistic_min_dist[2]
         print(f"min_i: {min_i}, min_j: {min_j}, dist: {min_dist}")
         # print(f"{labels[min_i]}, {labels[min_j]}, {min_dist}")
 
@@ -209,13 +171,11 @@ def set_dist_clustering(npz_filepath: str,
             print(f"Remove {min_i}, {min_j}, {min_dist}, {I}")
             c.remove(min_i)
             c.remove(min_j)
-            # c = remove_list_element(c, min_i, min_j)
             # add [min_i, min_j] to c
             c.append([min_i, min_j])
-            # c = append_element(c, [min_i, min_j])
 
             linkage_matrix[mat_index, :] = [min_i, min_j, min_dist, 2]
-            cluster_dict[str([min_i, min_j])] = (I, bytearray_union(cluster_dict, str(min_i), str(min_j)))
+            cluster_dict[str([min_i, min_j])] = I
         
         elif isinstance(min_i, list) and not isinstance(min_j, list):
             i = str(min_i)
@@ -226,8 +186,8 @@ def set_dist_clustering(npz_filepath: str,
 
             min_i.append(min_j)
             c.append(min_i)
-            linkage_matrix[mat_index, :] = [min_j, cluster_dict[i][0], min_dist, len(min_i)]
-            cluster_dict[str(min_i)] = (I, bytearray_union(cluster_dict, i, str(min_j)))
+            linkage_matrix[mat_index, :] = [min_j, cluster_dict[i], min_dist, len(min_i)]
+            cluster_dict[str(min_i)] = I
 
         elif not isinstance(min_i, list) and isinstance(min_j, list):
             j = str(min_j)
@@ -238,8 +198,8 @@ def set_dist_clustering(npz_filepath: str,
 
             min_j.append(min_i)
             c.append(min_j)
-            linkage_matrix[mat_index, :] = [min_i, cluster_dict[j][0], min_dist, len(min_j)]
-            cluster_dict[str(min_j)] = (I, bytearray_union(cluster_dict, j, str(min_i)))
+            linkage_matrix[mat_index, :] = [min_i, cluster_dict[j], min_dist, len(min_j)]
+            cluster_dict[str(min_j)] = I
 
         elif isinstance(min_i, list) and isinstance(min_j, list):
             i = str(min_i)
@@ -250,11 +210,12 @@ def set_dist_clustering(npz_filepath: str,
 
             min_i.extend(min_j)
             c.append(min_i)
-            print(cluster_dict[j][0])
-            linkage_matrix[mat_index, :] = [cluster_dict[i][0], cluster_dict[j][0], min_dist, len(min_i)]
-            cluster_dict[str(min_i)] = (I, bytearray_union(cluster_dict, i, j))
+            linkage_matrix[mat_index, :] = [cluster_dict[i], cluster_dict[j], min_dist, len(min_i)]
+            cluster_dict[str(min_i)] = I
         
         print(linkage_matrix[mat_index, :])
+        # c.remove(min_i)
+        # c.remove(min_j)
         print([i for i in c if isinstance(i, list)])
 
         mat_index += 1
@@ -266,14 +227,14 @@ def set_dist_clustering(npz_filepath: str,
     print(linkage_matrix)
     # 
     # /home/syuu/Project/nict_clustering/hcluster/files/s_shaped
-    np.save(f"{linkage_matrix_save_path}/{save_name}.npy", linkage_matrix)
+    np.save(f"{linkage_matrix_save_path}/linkage_matrix_logistic.npy", linkage_matrix)
 
 
 def plot_dendrogram(save_path: str,
                     label_file_path: str,
                     npz_filepath: str,
                     linkage_matrix_filepath: str,
-                    family_name_count_json_filepath=""):
+                    family_name_count_json_filepath: str):
     """
     func
     """
@@ -317,12 +278,11 @@ def plot_dendrogram(save_path: str,
     # plt.axhline(y=0.615, color='r', ls='-')
 
     # * Create colormap from families
-    # with open(family_name_count_json_filepath, "r", encoding='utf-8') as f:
-    #     family_names_count = json.load(f)
-    # family_names = list(family_names_count.keys())
-    family_names = ["gafgyt", "coinminer", "oinminer", 'sabsik', 'hajime', 'tsunami', 'mirai']
+    with open(family_name_count_json_filepath, "r", encoding='utf-8') as f:
+        family_names_count = json.load(f)
+    family_names = list(family_names_count.keys())
     cmap = plt.get_cmap("viridis")
-    colors = cmap(np.linspace(0, 1, len(family_names)))
+    colors = cmap(np.linspace(0, 1, len(len(family_names_count))))
     colormap = {}
     for c, fam in zip(colors, family_names):
         colormap[fam] = c
@@ -385,27 +345,16 @@ def test_bytearray():
     mat_dense = csr_matrix.astype(np.int8).A
     bytearray_list = [bytearray(i) for i in mat_dense]
     
-
-
 if __name__ == "__main__":
     start = datetime.now()
-    all_npz_file = "/home/syuu/Project/nict_clustering/latest_analysis_date/clustering/20220620/input_data/20220620_CSR.npz"
-    all_label_text_file = "/home/syuu/Project/nict_clustering/latest_analysis_date/clustering/20220620/input_data/20220620_labels.txt"
-    all_family_name_count_json = "/home/syuu/Project/nict_clustering/Data_preprocess/data/family_name_counter_20220620.json"
-    
-    # test_npz_file = "latest_analysis_date/clustering/gafgyt_coinminer_sabsik_hajime_tsunami/input_data/avcalss_based_formatted_label_gafgyt_coinminer_sabsik_hajime_tsunami_CSR.npz"
-    # test_label_text_file = "latest_analysis_date/clustering/gafgyt_coinminer_sabsik_hajime_tsunami/input_data/avcalss_based_formatted_label_gafgyt_coinminer_sabsik_hajime_tsunami_labels.txt"
+    test_npz_file = "latest_analysis_date/clustering/gafgyt_coinminer_sabsik_hajime_tsunami/input_data/avcalss_based_formatted_label_gafgyt_coinminer_sabsik_hajime_tsunami_CSR.npz"
+    test_label_text_file = "latest_analysis_date/clustering/gafgyt_coinminer_sabsik_hajime_tsunami/input_data/avcalss_based_formatted_label_gafgyt_coinminer_sabsik_hajime_tsunami_labels.txt"
     set_dist_clustering(
-        npz_filepath=all_npz_file,
-        label_file_path=all_label_text_file,
+        npz_filepath=test_npz_file,
+        label_file_path=test_label_text_file,
         linkage_matrix_save_path="hcluster/files/linkage_matrix",
-        save_name="linkage_matrix_all_bytearray"
+        # save_name="linkage_matrix_bytearray"
     )
-    # plot_dendrogram(
-    #     save_path="latest_analysis_date/clustering/gafgyt_coinminer_sabsik_hajime_tsunami/output_data/numba_speedup",
-    #     label_file_path=test_label_text_file,
-    #     npz_filepath=test_npz_file,
-    #     linkage_matrix_filepath="hcluster/files/linkage_matrix/linkage_matrix_bytearray.npy"
-    # )
+    # plot_dendrogram()
     # all_data_preprocess()
     print(f"END: {datetime.now() - start}")
