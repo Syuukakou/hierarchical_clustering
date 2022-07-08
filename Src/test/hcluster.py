@@ -7,13 +7,11 @@ from scipy.cluster.hierarchy import dendrogram
 import matplotlib.pyplot as plt
 from datetime import datetime
 import re
-import json
 sys.path.append("/home/syuu/Project/nict_clustering")
 # from Src.functions import plot_pairwise_intersection_based_matrix
-from numba import njit
+from numba import njit, prange, jit
 import numba
-from Clustering_Plot_methods.functions import plot_pairwise_intersection_based_matrix, i_min_ab_a, one_hot_encoding
-
+# from Clustering_Plot_methods.functions import plot_pairwise_intersection_based_matrix, i_min_ab_a, one_hot_encoding
 
 @njit(fastmath=True)
 def calculate_i_min_b(i_min_b, alpha):
@@ -29,36 +27,56 @@ def calculate_i_min_b(i_min_b, alpha):
         i_factor = 1 / (1 + np.exp(-alpha * (i_min_b - 0.5)))
     return i_factor
 
-@njit(fastmath=True)
-def cal_intersection(cluster0, cluster1):
-    count = 0
-    for i, j in zip(cluster0, cluster1):
-        if i & j == 1:
-            count += 1
-    return count
+# @njit(fastmath=True)
+# def cal_intersection(cluster0, cluster1):
+#     # count = 0
+#     l = []
+#     for i, j in zip(cluster0, cluster1):
+#         l.append(i & j)
+#         # if i & j == 1:
+#         #     count += 1
+#     count = count_one_bytearray(l)
+#     return count
+
+# @njit(fastmath=True)
+# def cal_ab(cluster0, cluster1):
+#     # count = 0
+#     count = sum([i & ~j for (i, j) in zip(cluster0, cluster1)])
+#     # for i, j in zip(cluster0, cluster1):
+#     #     if i & ~j == 1:
+#     #         count += 1
+#     return count
+
+# @njit(fastmath=True)
+# def cal_ba(cluster0, cluster1):
+#     count = 0
+#     for i, j in zip(cluster0, cluster1):
+#         if ~i & j == 1:
+#             count += 1
+#     return count
+# ------------------------------------
+# @njit(fastmath=True)
+# def cal_abba(cluster0, cluster1):
+#     ab = np.sum([i & ~j for (i, j) in zip(cluster0, cluster1)], dtype=np.int8)
+#     ba = np.sum([~i & j for (i, j) in zip(cluster0, cluster1)], dtype=np.int8)
+#     return ab, ba
 
 @njit(fastmath=True)
-def cal_ab(cluster0, cluster1):
-    count = 0
-    for i, j in zip(cluster0, cluster1):
-        if i & ~j == 1:
-            count += 1
-    return count
-
-@njit(fastmath=True)
-def cal_ba(cluster0, cluster1):
-    count = 0
-    for i, j in zip(cluster0, cluster1):
-        if ~i & j == 1:
-            count += 1
-    return count
+def count_abba_intersection(cluster0, cluster1):
+    # ab, ba, intersection = 0, 0, 0
+    ab = np.sum([i & ~j for (i, j) in zip(cluster0, cluster1)], dtype=np.int8)
+    ba = np.sum([~i & j for (i, j) in zip(cluster0, cluster1)], dtype=np.int8)
+    intersection = np.sum([i & j for (i, j) in zip(cluster0, cluster1)], dtype=np.int8)
+    return ab, ba, intersection
+# -----------------------------
 
 @njit(fastmath=True)
 def count_one_bytearray(byte_array):
     count = 0
     for i in byte_array:
-        if i == 1:
-            count += 1
+        count += i
+    # count = sum(byte_array)
+    
     return count
 
 @njit(fastmath=True)
@@ -70,7 +88,7 @@ def final_calculate(ab, ba, cluster0_sum, cluster1_sum, beta, i_factor):
     return set_distance
 
 
-@njit
+@njit(fastmath=True)
 def calculate_distance(cluster0, cluster1, alpha, beta):
     """
     Assume two sets `A, B`, and `|B| <= |A|`
@@ -92,14 +110,16 @@ def calculate_distance(cluster0, cluster1, alpha, beta):
     cluster1_sum = count_one_bytearray(cluster1)
 
     min_b = min(cluster0_sum, cluster1_sum)
-    intersection = cal_intersection(cluster0, cluster1)
+    ab, ba, intersection = count_abba_intersection(cluster0, cluster1)
+    # intersection = cal_intersection(cluster0, cluster1)
+    # ab, ba = cal_abba(cluster0, cluster1)
     i_min_b = intersection / min_b
 
     i_factor = calculate_i_min_b(i_min_b, alpha)
     
-    ab = cal_ab(cluster0, cluster1)
+    # ab = cal_ab(cluster0, cluster1)
 
-    ba = cal_ba(cluster0, cluster1)
+    # ba = cal_ba(cluster0, cluster1)
 
     set_distance = final_calculate(ab, ba, cluster0_sum, cluster1_sum, beta, i_factor)
 
@@ -133,7 +153,7 @@ def find_min_dist(cluster_dict, c, logistic_alpha=12, s_shaped_alpha=5):
             min_j = v1
     return min_i, min_j, min_dist
 
-@njit
+@njit(fastmath=True)
 def cal_or_operation(cluster0, cluster1):
     result = []
     for i, j in zip(cluster0, cluster1):
@@ -144,19 +164,19 @@ def bytearray_union(clusters_dict: dict, key_0: str, key_1: str):
     return bytearray(cal_or_operation(clusters_dict[key_0][1], clusters_dict[key_1][1]))
     # return bytearray([i | j for (i, j) in zip(clusters_dict[key_0][1], clusters_dict[key_1][1])])
 
-@njit
-def remove_list_element(c, e0, e1):
-    """
-    remove element by index from list
-    """
-    c.remove(e0)
-    c.remove(e1)
-    return c
+# @njit
+# def remove_list_element(c, e0, e1):
+#     """
+#     remove element by index from list
+#     """
+#     c.remove(e0)
+#     c.remove(e1)
+#     return c
 
-@njit
-def append_element(c, element):
-    c.append(element)
-    return c
+# @njit
+# def append_element(c, element):
+#     c.append(element)
+#     return c
 
 def set_dist_clustering(npz_filepath: str,
                         label_file_path: str,
@@ -357,24 +377,24 @@ def plot_dendrogram(save_path: str,
     intersection = csr_matrix.dot(csr_matrix.T)
     xtick_labels = [i.get_text() for i in xtick_labels_text]
 
-    plot_pairwise_intersection_based_matrix(
-        csr_matrix=csr_matrix,
-        intersection_csr_matrix=intersection,
-        labels=label_with_index,
-        xtick_labels=xtick_labels,
-        colormap=colormap,
-        save_path = save_path,
-        keywords_str="all",
-        alpha=12,
-        method="Set_Dist"
-    )
+    # plot_pairwise_intersection_based_matrix(
+    #     csr_matrix=csr_matrix,
+    #     intersection_csr_matrix=intersection,
+    #     labels=label_with_index,
+    #     xtick_labels=xtick_labels,
+    #     colormap=colormap,
+    #     save_path = save_path,
+    #     keywords_str="all",
+    #     alpha=12,
+    #     method="Set_Dist"
+    # )
 
-def all_data_preprocess():
-    one_hot_encoding(
-        json_file_path="Data_preprocess/data/20220620_formatted_label_hash.json",
-        save_path="latest_analysis_date/clustering/20220620",
-        save_name='20220620'
-    )
+# def all_data_preprocess():
+#     one_hot_encoding(
+#         json_file_path="Data_preprocess/data/20220620_formatted_label_hash.json",
+#         save_path="latest_analysis_date/clustering/20220620",
+#         save_name='20220620'
+#     )
 
 
 def test_bytearray():
@@ -385,22 +405,45 @@ def test_bytearray():
     mat_dense = csr_matrix.astype(np.int8).A
     bytearray_list = [bytearray(i) for i in mat_dense]
     
+def test():
+    a = bytearray(np.random.choice(2, 10000000, replace=True))
+    b = bytearray(np.random.choice(2, 10000000, replace=True))
+    start = datetime.now()
+    # a_count = count_one_bytearray(a)
+    # b_count = count_one_bytearray(b)
+    # a_count, b_count = count_one_dup(a, b)
+    # # a_count, b_count, ab, ba, intersection, min_b = count_one_dup_abba_intersection(a, b)
+    # ab, ba, intersection = count_abba_intersection(a, b)
+    # min_b = min(a_count, b_count)
+    # intersection = cal_intersection(a, b)
+    # i_min_b = intersection / min_b
+    # i_factor = calculate_i_min_b(i_min_b, 12)
+    # ab, ba = cal_abba(a, b)
+    # ab = cal_ab(a, b)
+    # ba = cal_ba(a, b)
+
+    # print(f"{datetime.now() - start}")
+
+
 
 
 if __name__ == "__main__":
     start = datetime.now()
-    all_npz_file = "/home/syuu/Project/nict_clustering/latest_analysis_date/clustering/20220620/input_data/20220620_CSR.npz"
-    all_label_text_file = "/home/syuu/Project/nict_clustering/latest_analysis_date/clustering/20220620/input_data/20220620_labels.txt"
-    all_family_name_count_json = "/home/syuu/Project/nict_clustering/Data_preprocess/data/family_name_counter_20220620.json"
+    test()
+    all_npz_file = r"C:\Users\Syuukakou\PycharmProjects\hierarchical_clustering\Files\input_data\20220620\input_data\20220620_CSR.npz"
+    all_label_text_file = r"C:\Users\Syuukakou\PycharmProjects\hierarchical_clustering\Files\input_data\20220620\input_data\20220620_labels.txt"
+    # all_family_name_count_json = "/home/syuu/Project/nict_clustering/Data_preprocess/data/family_name_counter_20220620.json"
     
     # test_npz_file = "latest_analysis_date/clustering/gafgyt_coinminer_sabsik_hajime_tsunami/input_data/avcalss_based_formatted_label_gafgyt_coinminer_sabsik_hajime_tsunami_CSR.npz"
     # test_label_text_file = "latest_analysis_date/clustering/gafgyt_coinminer_sabsik_hajime_tsunami/input_data/avcalss_based_formatted_label_gafgyt_coinminer_sabsik_hajime_tsunami_labels.txt"
+    
     set_dist_clustering(
         npz_filepath=all_npz_file,
         label_file_path=all_label_text_file,
         linkage_matrix_save_path="hcluster/files/linkage_matrix",
         save_name="linkage_matrix_all_bytearray"
     )
+    
     # plot_dendrogram(
     #     save_path="latest_analysis_date/clustering/gafgyt_coinminer_sabsik_hajime_tsunami/output_data/numba_speedup",
     #     label_file_path=test_label_text_file,
